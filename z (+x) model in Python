@@ -1,0 +1,174 @@
+from itertools import combinations
+from gurobipy import *
+import math
+import sys
+import time
+time_0 = time.time()
+
+# Create z-model, set objective function.
+z_mod = Model(name = 'Z model')
+z_fn = 0
+z_mod.setObjective(z_fn, GRB.MAXIMIZE)
+
+# Parameters (MAY BE CHANGED TO ANY POSITIVE INTEGER.)
+n = 12
+
+# Check if n is divisible by 3.
+if n % 3 != 0:
+    print("Error: Number of teams is not divisible by 3.")
+    sys.exit()
+
+teams = list(i for i in range(1,n+1))
+rounds = list(r for r in range(1,n))
+triples = list(combinations(teams,3))
+
+# Patterns must satisfy the following:
+# Never play Home twice in a row (also cyclically)
+# Never play Away four times in a row (also cyclically)
+# Function patterncheck ensures that these constraints are taken into account.
+def patterncheck(pattern: tuple[int,...], n: int) -> bool:
+    outcome = True
+    for r in range(1,n):
+        if (r in pattern) + (r+1 in pattern) == 2:
+            outcome = False
+        elif (r not in pattern) + (r+1 not in pattern) + (r+2 not in pattern) + (r+3 not in pattern) == 4 and (r+4 <= n):
+            outcome = False
+        elif (1 in pattern) + (n-1 in pattern) == 2:
+            outcome = False
+        elif (n-3 in pattern) + (n-2 in pattern) + (n-1 in pattern) + (1 in pattern) == 0:
+            outcome = False
+        elif (n-2 in pattern) + (n-1 in pattern) + (1 in pattern) + (2 in pattern) == 0:
+            outcome = False
+        elif (n-1 in pattern) + (1 in pattern) + (2 in pattern) + (3 in pattern) == 0:
+            outcome = False
+    return outcome
+
+time_1 = time.time()
+# Length of a pattern (list) must equal ceil(n-1/3) or floor(n-1/3).
+# Build up patterns, using all lists of the right length, for which PatternCheck yields True.
+patterns = []
+for p in combinations(rounds, math.ceil((n-1)/3)):
+    if patterncheck(p, n):
+        patterns.append(p)
+for p in combinations(rounds, math.floor((n-1)/3)):
+    if patterncheck(p, n):
+        patterns.append(p)
+time_2 = time.time()
+print('--------------------------------------')
+print('Total number of possible patterns is', len(patterns))
+print('--------------------------------------')
+
+# Create integer decision variables: z[p] is the number of times a pattern p occurs.
+time_3 = time.time()
+z = {
+    p: z_mod.addVar(vtype = GRB.INTEGER, name=f'z[{p}]')
+    for p in patterns
+}
+
+# Constraint z1: The total number of used patterns equals the number of teams.
+z_mod.addConstr(
+    quicksum(z[p] for p in patterns) == n,
+    name=f'z_Constr_z1'
+    )
+
+# Constraint z2: Each round, exactly n/3 teams play at home.
+for r in rounds:
+    z_mod.addConstr(
+        quicksum(z[p] for p in patterns if r in p) == n // 3,
+        name=f'z_Constr_z2[{r}]'
+    )
+
+# Optimize the z-model.
+z_mod.optimize()
+time_4 = time.time()
+
+# We should assign team numbers to teams. Therefore, we create a list of the used patterns. The index of each pattern is
+# the team number of that team.
+used_patterns = []
+index_number = 0
+for p in patterns:
+    if z[p].x > 0:
+        counter = 0
+        while counter < z[p].x:
+            used_patterns = used_patterns + [p]
+            counter = counter + 1
+            index_number = index_number + 1
+time_5 = time.time()
+
+print('--------------------------------------')
+for i in teams:
+    print('Z-model HAP for team', i, 'is', used_patterns[i - 1])
+print('--------------------------------------')
+time_6 = time.time()
+
+# Define function that creates x-model based on z-model
+def build_x_model(used_patterns: list[...]) -> None:
+    x_mod = Model(name = 'X model')
+    x_fn = 0
+    x_mod.setObjective(x_fn, GRB.MAXIMIZE)
+    # Define binary variables: y(i,r) = 1 iff team i plays at home in round r
+    y = {
+        (i, r): 0
+        for i in teams
+        for r in rounds
+    }
+    for r in rounds:
+        for i in teams:
+            if r in used_patterns[i-1]:
+                    y[i, r] = 1
+    # Define binary variables: x(i,j,k,r) = 1 if and only if teams i,j,k play a match in round r.
+    x = {
+        (i, j, k, r): x_mod.addVar(vtype = GRB.BINARY, name=f'x[{i},{j},{k},{r}]')
+        for (i,j,k) in triples
+        for r in rounds
+        if y[i,r] + y[j,r] + y[k,r] == 1
+    }
+    # Constraint x1: each team meets every opponent exactly twice.
+    for i in teams:
+        for j in teams:
+            if j != i:
+                x_mod.addConstr(
+                quicksum(x[t + (r,)]
+                         for r in rounds
+                         for t in triples
+                         if i in t and j in t and sum(y[k, r] for k in t) == 1
+                         ) == 2,
+                name=f'Constr_x1[{i},{j}]'
+                )
+    # Constraint x2: each team plays exactly once per round.
+    for r in rounds:
+        for i in teams:
+            x_mod.addConstr(
+                quicksum(x[t + (r,)] for t in triples if i in t and sum(y[k, r] for k in t) == 1) == 1,
+                name=f'Constr_x2[{i},{r}]'
+            )
+    x_mod.optimize()
+    x_mod.write("X-model.lp")
+    for r in rounds:
+        print('ROUND', r)
+        for (i, j, k) in triples:
+            if y[i, r] + y[j, r] + y[k, r] == 1:
+                if x[i, j, k, r].x > 0:
+                    if y[i,r] > 0:
+                        print((i,j,k), 'play a match', '- Team', i, 'plays at home.')
+                    elif y[j,r] > 0:
+                        print((i,j,k), 'play a match', '- Team', j, 'plays at home.')
+                    elif y[k,r] > 0:
+                        print((i,j,k), 'play a match', '- Team', k, 'plays at home.')
+        print('--------------------------------------')
+
+time_7 = time.time()
+build_x_model(used_patterns)
+time_8 = time.time()
+
+# Print time duration of computation
+print('Time required for finding allowed Home Away Patterns:', time_2 - time_1)
+print('Time required for solving z-model:', time_4 - time_3)
+print('Time required for defining team numbers in list used_patterns:', time_5 - time_4)
+print('Time required for printing used HAP patterns and their team numbers:', time_6 - time_5)
+print('Time required for building, solving and printing solutions to x-model:', time_8 - time_7)
+print('Total time required:', time_8 - time_0)
+print('--------------------------------------')
+
+# Write linear program file
+z_mod.write("Z-model.lp")
