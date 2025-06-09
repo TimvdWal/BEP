@@ -1,0 +1,127 @@
+from gurobipy import *
+import sys
+import time
+time_0 = time.time()
+
+# Create model, set objective function
+opt_mod = Model(name = 'Optimization model')
+obj_fn = 0
+opt_mod.setObjective(obj_fn, GRB.MAXIMIZE)
+
+# Parameters (MAY BE SET TO ANY POSITIVE INTEGER)
+n = 12
+
+# Check whether n is divisible by three. If not, stop.
+if n % 3 != 0:
+    print("Error: Number of teams is not divisible by 3.")
+    sys.exit()
+
+# Add binary variables x to model. x[i,j,k,r] = 1 if and only if teams i,j,k play a match in round r
+x = dict()
+for i in range(1, n+1):
+    for j in range(i+1, n+1):
+        for k in range(j+1, n+1):
+            for r in range (1, n):
+                x[i, j, k, r] = opt_mod.addVar(vtype = GRB.BINARY, name=f'x[{i},{j},{k},{r}]')
+
+# Constraint 1: Each team plays exactly once per team
+for r in range(1, n):
+    for i in range(1, n+1):
+        count = 0
+        for u in range(1, n+1):
+            for j in range(u+1, n+1):
+                for k in range(j+1, n+1):
+                    triple = (u, j, k)
+                    if i in triple:
+                        count = count + x[u, j, k, r]
+        opt_mod.addConstr(count == 1, name=f'Constr1[{i},{r}]')
+
+# Constraint 2: Each pair of teams meets exactly twice
+for i in range(1, n+1):
+    for j in range(i+1, n+1):
+        count = 0
+        for r in range(1, n):
+            for u in range(1, n+1):
+                for v in range(u+1, n+1):
+                    for k in range(v+1, n+1):
+                        triple = (u, v, k)
+                        if i in triple:
+                            if j in triple:
+                                count = count + x[u, v, k, r]
+        opt_mod.addConstr(count == 2,  name=f'Constr2[{i},{j}]')
+
+
+# Add binary variables y to model. y[i,r] = 1 if and only if team i plays at Home in round r.
+y = dict()
+for i in range(1, n+1):
+    for r in range (1, n):
+        y[i, r] = opt_mod.addVar(vtype = GRB.BINARY, name=f'y[{i},{r}]')
+
+# Constraint 3a: There is exactly one Home player in each triplet that plays
+for r in range(1, n):
+    for i in range(1, n+1):
+        for j in range(i+1, n+1):
+            for k in range(j+1, n+1):
+                home_sum = y[i,r] + y[j,r] + y[k,r]
+                opt_mod.addConstr(x[i,j,k,r] <= home_sum, name=f'Constr3a[{i},{j},{k},{r}]')
+
+# Constraint 3b: There are exactly n/3 Home players each round
+for r in range(1, n):
+    lhs = 0
+    for i in range(1, n+1):
+        lhs = lhs + y[i, r]
+    opt_mod.addConstr(lhs*3 == n, name=f'Constr3b[{r}]')
+
+# Constraint 4a: A team never plays Home twice in a row
+for i in range(1,n+1):
+    for r in range(1, n-1):
+        home_sum = y[i,r] + y[i, r+1]
+        opt_mod.addConstr(home_sum <= 1, name=f'Constr4a[{i},{r}]')
+
+# Constraint 4b: A team never plays Home twice in a row cyclically
+for i in range(1, n+1):
+    home_sum = y[i, 1] + y[i, n-1]
+    opt_mod.addConstr(home_sum <= 1, name=f'Constr4b[{i}]')
+
+# Constraint 5a: A team never plays away four times in a row
+for i in range(1, n+1):
+    for r in range(1, n-3):
+        away_sum = y[i, r] + y[i, r+1] + y[i, r+2] + y[i, r+3]
+        opt_mod.addConstr(away_sum >= 1, name=f'Constr5a[{i},{r}]')
+
+# Constraints 5b,c,d: A team never plays away four times in a row cyclically
+for i in range(1, n+1):
+    opt_mod.addConstr(y[i, 1] + y[i, n-1] + y[i, n-2] + y[i, n-3] >= 1, name=f'Constr5b[{i}]')
+    opt_mod.addConstr(y[i, 1] + y[i, 2] + y[i, n-1] + y[i, n-2] >= 1, name=f'Constr5c[{i}]')
+    opt_mod.addConstr(y[i, 1] + y[i, 2] + y[i, 3] + y[i, n-1] >= 1, name=f'Constr5d[{i}]')
+
+# Optimize the model
+opt_mod.optimize()
+time_1 = time.time()
+opt_mod.write("Optimization_model.lp")
+time_2 = time.time()
+
+#Print schedule and time markings
+print('-----------------------------------')
+print('Number of teams is', n)
+print('Number of rounds is', n-1)
+print('-----------------------------------')
+for r in range(1,n-1):
+    print('ROUND', r)
+    for i in range(1,n+1):
+        for j in range(i+1,n+1):
+            for k in range(j+1,n+1):
+                if x[i,j,k,r].x > 0:
+                    if y[i,r].x == 1:
+                        print('Teams', (i,j,k), 'play in round', r, 'with team', i, 'playing Home.')
+                    elif y[j,r].x == 1:
+                        print('Teams', (i,j,k), 'play in round', r, 'with team', j, 'playing Home.')
+                    elif y[k,r].x == 1:
+                        print('Teams', (i,j,k), 'play in round', r, 'with team', k, 'playing Home.')
+    print('-----------------------------------')
+time_3 = time.time()
+
+print('Time required for solving model:', time_1 - time_0)
+print('Time required for writing linear program file:', time_2 - time_1)
+print('Time required for printing values of binary variables:', time_3 - time_2)
+print('Total time required:', time_3 - time_0)
