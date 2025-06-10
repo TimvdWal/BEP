@@ -78,6 +78,13 @@ for r in rounds:
         name=f'z_Constr_z2[{r}]'
     )
 
+# Constraint z3: A pattern may only occur 0, 1 or 2 times.
+for p in patterns:
+    z_mod.addConstr(
+        z[p] <= 2,
+        name=f'z_Constr_z3[{r}]'
+    )
+
 # Optimize the z-model.
 z_mod.optimize()
 time_4 = time.time()
@@ -108,20 +115,17 @@ def build_x_model(used_patterns: list[...]) -> None:
     x_mod.setObjective(x_fn, GRB.MAXIMIZE)
     # Define binary variables: y(i,r) = 1 iff team i plays at home in round r
     y = {
-        (i, r): 0
+        (i, r): 1 if r in used_patterns[i - 1] else 0
         for i in teams
         for r in rounds
     }
-    for r in rounds:
-        for i in teams:
-            if r in used_patterns[i-1]:
-                    y[i, r] = 1
+
     # Define binary variables: x(i,j,k,r) = 1 if and only if teams i,j,k play a match in round r.
     x = {
         (i, j, k, r): x_mod.addVar(vtype = GRB.BINARY, name=f'x[{i},{j},{k},{r}]')
         for (i,j,k) in triples
         for r in rounds
-        if y[i,r] + y[j,r] + y[k,r] == 1
+        if y[i, r] + y[j, r] + y[k, r] == 1
     }
     # Constraint x1: each team meets every opponent exactly twice.
     for i in teams:
@@ -147,7 +151,7 @@ def build_x_model(used_patterns: list[...]) -> None:
     for r in rounds:
         print('ROUND', r)
         for (i, j, k) in triples:
-            if y[i, r] + y[j, r] + y[k, r] == 1:
+            if (i, j, k, r) in x and x[i, j, k, r].x > 0:
                 if x[i, j, k, r].x > 0:
                     if y[i,r] > 0:
                         print((i,j,k), 'play a match', '- Team', i, 'plays at home.')
@@ -157,15 +161,16 @@ def build_x_model(used_patterns: list[...]) -> None:
                         print((i,j,k), 'play a match', '- Team', k, 'plays at home.')
         print('--------------------------------------')
 
+print('Time required for finding allowed Home Away Patterns:', time_2 - time_1)
+print('Time required for solving z-model:', time_4 - time_3)
+print('Time required for defining team numbers in list used_patterns:', time_5 - time_4)
+print('Time required for printing used HAP patterns and their team numbers:', time_6 - time_5)
 time_7 = time.time()
 build_x_model(used_patterns)
 time_8 = time.time()
 
 # Print time duration of computation
-print('Time required for finding allowed Home Away Patterns:', time_2 - time_1)
-print('Time required for solving z-model:', time_4 - time_3)
-print('Time required for defining team numbers in list used_patterns:', time_5 - time_4)
-print('Time required for printing used HAP patterns and their team numbers:', time_6 - time_5)
+
 print('Time required for building, solving and printing solutions to x-model:', time_8 - time_7)
 print('Total time required:', time_8 - time_0)
 print('--------------------------------------')
